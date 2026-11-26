@@ -1,0 +1,10 @@
+{
+  "name": "clowder-ai-japanese-localizer",
+  "private": true,
+  "dependencies": {
+    "@babel/parser": "7.29.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
