@@ -8,14 +8,20 @@ Clowder AI v0.14.1 の新版インターフェース向けの日本語化です�
 
 PowerShell 7、Node.js 24、上流の `packageManager` に対応する pnpm を用意します。インストーラーの生成には Inno Setup も必要です。
 
-`localization` を上流の作業ツリーと別に置くと、新しい上流タグにも同じ辞書を使えます。次のコマンドは、`localization` の親フォルダーから実行します。`clowder-ai` は、ビルド対象のタグを取得済みの Git リポジトリです。
+フォークを初めて取得する場合は次のコマンドを実行します。
 
 ```powershell
+git clone --branch localize/ja https://github.com/migimaru/clowder-ai.git
+Set-Location .\clowder-ai
+git remote add upstream https://github.com/zts212653/clowder-ai.git
+git fetch upstream tag v0.14.1
 npm install --prefix .\localization
-pwsh -NoProfile -File .\localization\Build-Localized.ps1 -SourceDir .\clowder-ai -Version 0.14.1
+pwsh -NoProfile -File .\localization\Build-Localized.ps1 -SourceDir . -Version 0.14.1
 ```
 
-スクリプトは `v0.14.1` から別の作業ツリーを作成し、訳を適用してビルド専用のローカルコミットに記録します。成果物は `clowder-builds\ja-0.14.1-日時\dist` に出力されます。`-SkipInstaller` を指定すると、Inno Setup を使わずポータブル版の ZIP を生成します。`-Ref` で別のタグまたはコミットを指定できます。`-AlreadyApplied` は、訳を適用済みでソース変更をコミットしたビルド用作業ツリーから再実行する場合に使います。
+`localization` と `clowder-ai` を同じ親フォルダーに置く場合は、その親から実行し `-SourceDir .\clowder-ai` を指定できます。
+
+スクリプトは `v0.14.1` から別の作業ツリーを作成し、訳を適用してビルド専用のローカルコミットに記録します。成果物はソースリポジトリと同階層の `clowder-builds\ja-0.14.1-日時\dist` に出力されます。`-SkipInstaller` を指定すると、Inno Setup を使わずポータブル版の ZIP を生成します。`-Ref` で別のタグまたはコミットを指定できます。`-AlreadyApplied` は、訳を適用済みでソース変更をコミットしたビルド用作業ツリーから再実行する場合に使います。
 
 ## 上流更新に追従する
 
