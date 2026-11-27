@@ -250,8 +250,13 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
     let specifier = path.relative(path.dirname(file), helper).replaceAll('\\', '/').replace(/\.ts$/, '');
     if (!specifier.startsWith('.')) specifier = `./${specifier}`;
     const importLine = `import { ${[...used].sort().join(', ')} } from '${specifier}';\n`;
-    const directive = result.match(/^(?:\s*(?:'use client'|"use client");?\s*\n)/);
-    result = directive ? directive[0] + importLine + result.slice(directive[0].length) : importLine + result;
+    // Directives such as 'use client' must stay first, even after a leading comment; every edit comes later.
+    const directive = ast.program.directives.at(-1);
+    if (directive) {
+      const lineEnd = result.indexOf('\n', directive.end);
+      const at = lineEnd < 0 ? result.length : lineEnd + 1;
+      result = result.slice(0, at) + importLine + result.slice(at);
+    } else result = importLine + result;
     parser.parse(result, { sourceType: 'module', plugins: ['typescript', ...(file.endsWith('.tsx') ? ['jsx'] : [])] });
     edits.set(file, result);
   }
