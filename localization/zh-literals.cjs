@@ -148,7 +148,7 @@ function quote(value) {
   return JSON.stringify(value);
 }
 
-function templateCall(node, text, english, japanese, zh) {
+function templateCall(node, text, english, japanese, zh, source = expression => text.slice(expression.start, expression.end)) {
   const slots = [...japanese.matchAll(/\{(\d+)\}/g)].map(match => Number(match[1]));
   if (slots.length !== node.expressions.length || slots.some((slot, index) => slot !== index)) {
     throw new Error(`Keep template placeholders in order for ${JSON.stringify(zh)}`);
@@ -159,7 +159,7 @@ function templateCall(node, text, english, japanese, zh) {
   const build = parts => '`' + parts.map((part, index) => index === 0 ? part : '${' + names[index - 1] + '}' + part).join('') + '`';
   const chinese = build(node.quasis.map(part => escape(part.value.cooked)));
   const translated = build(japanese.split(/\{\d+\}/g).map(escape));
-  const values = node.expressions.map(expression => text.slice(expression.start, expression.end)).join(', ');
+  const values = node.expressions.map(source).join(', ');
   return `zjf((${names.join(', ')}) => ${chinese}, (${names.join(', ')}) => ${translated}, ${values})`;
 }
 
@@ -173,12 +173,35 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
   const inventory = new Map();
   const applied = new Set();
   const skippedData = new Set();
+  // Texts that a template splices into its output (`${on ? '禁用' : '启用'}`, `${path ?? '全局'}`) are only shown,
+  // even when the same words are compared elsewhere.
+  const spliced = new WeakSet();
+  const markSpliced = node => {
+    if (!node) return;
+    if (node.type === 'StringLiteral') spliced.add(node);
+    else if (node.type === 'ConditionalExpression') { markSpliced(node.consequent); markSpliced(node.alternate); }
+    else if (node.type === 'LogicalExpression') { markSpliced(node.left); markSpliced(node.right); }
+  };
   const lazy = new Set();
   const eager = [];
   for (const file of files) {
     const text = read(file);
     const ast = parse(parser, file, text);
-    const changes = [];
+    let changes = [];
+    // The values of a translated template keep their own Chinese (' · 跟随工具', a counter word, ...): they are
+    // translated in place before the template copies them.
+    const rewrite = (expression, inFunction) => {
+      const outer = changes;
+      changes = [];
+      visit(expression, callback, null, 'expression', inFunction);
+      const inner = changes;
+      changes = outer;
+      let result = text.slice(expression.start, expression.end);
+      for (const [start, stop, replacement] of inner.sort((a, b) => b[0] - a[0])) {
+        result = result.slice(0, start - expression.start) + replacement + result.slice(stop - expression.start);
+      }
+      return result;
+    };
     const used = new Set();
     // A module-level property is read again on each access, so the language is decided when it is shown.
     const replace = (node, parent, key, inFunction, call) => {
@@ -250,7 +273,7 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
         if (parent?.type === 'MemberExpression' && parent.computed && key === 'property') return;
         note(node.value, node.loc.start.line);
         // A display attribute (title, placeholder, aria-label, ...) is only shown; key attributes were skipped above.
-        if (parent?.type !== 'JSXAttribute' && data.has(node.value)) return void skippedData.add(node.value);
+        if (parent?.type !== 'JSXAttribute' && !spliced.has(node) && data.has(node.value)) return void skippedData.add(node.value);
         const japanese = dictionary.get(node.value);
         if (japanese === undefined) return;
         replace(node, parent, key, inFunction, `zj(${quote(node.value)}, ${quote(japanese)})`);
@@ -258,13 +281,15 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
         return;
       }
       if (node.type === 'TemplateLiteral') {
+        node.expressions.forEach(markSpliced);
         const english = templateKey(node);
         if (english === null || !HAN.test(node.quasis.map(part => part.value.cooked).join(''))) return;
         note(english, node.loc.start.line);
         if (data.has(english)) return void skippedData.add(english);
         const japanese = dictionary.get(english);
         if (japanese === undefined) return;
-        replace(node, parent, key, inFunction, templateCall(node, text, english, japanese, english));
+        replace(node, parent, key, inFunction,
+          templateCall(node, text, english, japanese, english, expression => rewrite(expression, true)));
         applied.add(english);
         return false;
       }

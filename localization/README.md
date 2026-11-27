@@ -8,6 +8,8 @@ Clowder AI v0.14.1 の新版インターフェース向けの日本語化です�
 
 API や共有パッケージからデータとして届く中国語（システム設定の項目名・説明・既定値、スキルの分類名）は、`zhja-data*.json` に入れた訳を `zjd()` が表示時に引きます（生成先は `components/shell/zh-ja-data.ts`）。MCP・スキル・プラグインそれぞれの説明文は提供元の文章なので、そのまま表示します。
 
+おすすめメンバーと役割テンプレートの名前・役割・性格・得意分野は `zhja-data-template.json` にあります。新版で日本語を選んでメンバーを新規作成すると、これらの初期値も日本語で入ります。
+
 適用は `packages/web`（`src`、`public/fonts`）と `packages/shared/src`（作業ツリーのお知らせの文言）を変更します。
 
 日本語表示には同梱の Noto Sans JP を使用します。フォントと SIL Open Font License 1.1 は `assets/fonts/` にあり、ビルド時に一緒に配布されます。[Google Fonts の取得元リビジョン](https://github.com/google/fonts/tree/66a36c8c94b1a5d992ee4e7f392fccfe4945767c/ofl/notosansjp)
@@ -36,7 +38,7 @@ pwsh -NoProfile -File .\localization\Build-Localized.ps1 -SourceDir . -Version 0
 1. 上流の新しいタグを取得し、新しい作業ツリーにチェックアウトします。
 2. `localize.cjs source <作業ツリー> --check` を実行します。`unmatchedTranslations` に出る文言は、その版で原文や配置が変わっていないか確認します。言語選択などの挿入位置が変わった場合、適用前にエラーで止まります。
 3. `node localize.cjs inventory-zh <作業ツリー>` で、`zh-targets.json` のファイルにある未訳の中国語の一覧（出現箇所つき）を出し、`zhja-*.json` に追加します。対象ファイルが上流で消えた場合は適用前にエラーで止まります。
-4. API の設定一覧（`packages/api/src/config/env-registry*`）やスキルの分類名が変わった場合は、`zhja-data*.json` を更新します。
+4. API の設定一覧（`packages/api/src/config/env-registry*`）、スキルの分類名、またはメンバーの初期値（`cat-template.json`、`packages/shared/src/native-tool-identities.ts`）が変わった場合は、対応する `zhja-data*.json` を更新します。
 5. `ja-*.json` / `zhja-*.json` と必要な挿入位置を更新し、新しい版番号で `Build-Localized.ps1` を実行します。
 
 `ja-*.json` のキーは上流の英語表示文、`zhja-*.json` のキーは上流の中国語表示文です。テンプレートの `{0}`、`{1}` は上流の式に対応するため、訳文でも順番を保ちます。同じ原文に異なる訳を登録すると検査が止まります。

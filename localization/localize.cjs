@@ -462,6 +462,27 @@ function integrateSource() {
     [/^import/m, "import { zj } from '../../shell/zh-ja';\nimport"],
     ['{t(zh, en)}', "{t(key === 'voice' ? zj(zh, '音声') : zh, en)}"],
   ]);
+  // These labels also occur in non-display data. Translate only the UI occurrences.
+  editSource('components/settings/members/MemberChangeSummary.tsx', 'members', [
+    [/^import/m, "import { zj } from '../../shell/zh-ja';\nimport"],
+    ["avatar: ['头像', 'Avatar'],", "avatar: [zj('头像', 'アバター'), 'Avatar'],"],
+    ["colorPrimary: ['主色', 'Primary color'],", "colorPrimary: [zj('主色', 'メインカラー'), 'Primary color'],"],
+    ["defaultModel: ['模型', 'Model'],", "defaultModel: [zj('模型', 'モデル'), 'Model'],"],
+    ["carrier: ['接入方式', 'Carrier'],", "carrier: [zj('接入方式', '接続方式'), 'Carrier'],"],
+    ["voiceRefAudio: ['参考音频', 'Reference audio'],", "voiceRefAudio: [zj('参考音频', '参照音声'), 'Reference audio'],"],
+  ]);
+  editSource('components/settings/PushDiagnosticsSection.tsx', 'settings', [
+    [/^import/m, "import { zj } from '../shell/zh-ja';\nimport"],
+    ["? '已启用' : '未启用'", "? '已启用' : zj('未启用', '無効')"],
+  ]);
+  editSource('components/McpConfigModalPanels.tsx', 'settings', [
+    [/^import/m, "import { zj } from './shell/zh-ja';\nimport"],
+    ["disconnected: { text: '未连接',", "disconnected: { get text() { return zj('未连接', '未接続'); },"],
+  ]);
+  editSource('components/settings/plugin-manager/plugin-manager-copy.ts', 'settings', [
+    ['const githubSteps = new Map([', "import { zj } from '../../shell/zh-ja';\n\nconst githubSteps = new Map(["],
+    ["['events', '事件'],", "['events', zj('事件', 'イベント')],"],
+  ]);
   // Chinese that the server registry and the skills manifest send as data.
   editSource('components/settings/SystemSettingsView.tsx', 'chineseData', [
     [/^import/m, "import { zj, zjd } from '../shell/zh-ja';\nimport"],
@@ -481,6 +502,11 @@ function integrateSource() {
     ['{v.description}', '{zjd(v.description)}'],
     ['（默认: {v.defaultValue}）', '（默认: {zjd(v.defaultValue)}）'],
   ]);
+  // 全局 is also a scope key elsewhere; this is the tab label shown for it.
+  editSource('components/settings/useDriftSync.ts', 'chineseData', [
+    [/^import/m, "import { zj } from '../shell/zh-ja';\nimport"],
+    ["{ key: GLOBAL_SCOPE_KEY, label: '全局',", "{ key: GLOBAL_SCOPE_KEY, label: zj('全局', '全体'),"],
+  ]);
   editSource('components/settings/primitives/ConfigFieldRenderer.tsx', 'chineseData', [
     [/^import/m, "import { zj } from '../../shell/zh-ja';\nimport"],
     ["      : '未设置'\n    : (field.currentValue ?? '未设置');",
@@ -494,6 +520,38 @@ function integrateSource() {
   editSource('components/settings/SkillPreviewModal.tsx', 'chineseData', [
     [/^import/m, "import { zjd } from '../shell/zh-ja';\nimport"],
     ['{category}', '{zjd(category)}'],
+  ]);
+  // Member templates: a member created in Japanese starts from Japanese role, personality and strengths.
+  // Nicknames, mention names and voice samples stay as they are (routing and the recorded voice depend on them).
+  editSource('components/first-run-quest/native-partner-identity.ts', 'chineseData', [
+    [/^import/m, "import { zjd } from '../shell/zh-ja';\nimport"],
+    ['    name: identity.name,\n    displayName: identity.name,', '    name: zjd(identity.name),\n    displayName: zjd(identity.name),'],
+    ['    roleDescription: identity.roleDescription,\n    personality: identity.personality,\n    teamStrengths: identity.teamStrengths,',
+      '    roleDescription: zjd(identity.roleDescription),\n    personality: zjd(identity.personality),\n    teamStrengths: zjd(identity.teamStrengths),'],
+    ['form.name = form.displayName = identity.name;', 'form.name = form.displayName = zjd(identity.name);'],
+    ['    form.roleDescription = identity.roleDescription;\n    form.personality = identity.personality;\n    form.teamStrengths = identity.teamStrengths;',
+      '    form.roleDescription = zjd(identity.roleDescription);\n    form.personality = zjd(identity.personality);\n    form.teamStrengths = zjd(identity.teamStrengths);'],
+  ]);
+  editSource('components/settings/members/member-editor-state.ts', 'chineseData', [
+    [/^import/m, "import { zjd } from '../../shell/zh-ja';\nimport"],
+    ['    name: template.name,\n    displayName: template.name,', '    name: zjd(template.name),\n    displayName: zjd(template.name),'],
+    ["    roleDescription: template.roleDescription,\n    personality: template.personality,\n    teamStrengths: template.teamStrengths ?? '',",
+      "    roleDescription: zjd(template.roleDescription),\n    personality: zjd(template.personality),\n    teamStrengths: zjd(template.teamStrengths ?? ''),"],
+  ]);
+  editSource('components/settings/members/MemberSettingsPage.tsx', 'chineseData', [
+    [/^import/m, "import { zjd } from '../../shell/zh-ja';\nimport"],
+    ['{template.nickname || template.name}</strong>', '{template.nickname || zjd(template.name)}</strong>'],
+  ]);
+  editSource('components/first-run-quest/TemplateStep.tsx', 'chineseData', [
+    [/^import/m, "import { zjd } from '../shell/zh-ja';\nimport"],
+    ['<span className="font-semibold text-cafe">{t.name}</span>', '<span className="font-semibold text-cafe">{zjd(t.name)}</span>'],
+    ['text={t.roleDescription}', 'text={zjd(t.roleDescription)}'],
+    ['<ExpandableProse text={t.personality}', '<ExpandableProse text={zjd(t.personality)}'],
+  ]);
+  // A count nested inside a translated template keeps its own Chinese counter word.
+  editSource('components/settings/members/RecommendedTeamSetup.tsx', 'chineseData', [
+    [/^import/m, "import { zj } from '../../shell/zh-ja';\nimport"],
+    ['` · ${available.length} 位`', 'zj(` · ${available.length} 位`, ` · ${available.length} 人`)'],
   ]);
   // A server component: the Japanese build names the page at build time.
   editSource('app/settings/page.tsx', 'document', [
