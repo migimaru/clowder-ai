@@ -62,7 +62,7 @@ const applied = new Set();
 const catalogEntries = new Set();
 const pending = new Map();
 const integration = { preference: 0, copy: 0, document: 0, settings: 0, settingsLabels: 0,
-  ...(source ? { navigation: 0, tests: 0, compatibility: 0, presentation: 0, demo: 0, fonts: 0, members: 0 } : {}) };
+  ...(source ? { navigation: 0, tests: 0, compatibility: 0, presentation: 0, demo: 0, fonts: 0, members: 0, chineseData: 0 } : {}) };
 let copies = 0;
 let exactEdits = 0;
 
@@ -442,7 +442,47 @@ function integrateSource() {
   // Source-text contracts that read the literals zh-literals.cjs wraps.
   editSource('components/__tests__/f190-visual-contract.test.ts', 'tests', [
     [/toContain\("'安装'"\)/g, "toContain('\"安装\"')"],
-    ['/v\\.description[\\s\\S]*?默认: \\{v\\.defaultValue\\}/', '/v\\.description[\\s\\S]*?默认:[\\s\\S]*?\\{v\\.defaultValue\\}/'],
+    ['/v\\.description[\\s\\S]*?默认: \\{v\\.defaultValue\\}/', '/v\\.description[\\s\\S]*?默认:[\\s\\S]*?\\{(?:zjd\\()?v\\.defaultValue\\)?\\}/'],
+  ]);
+  // Copies chosen as "English or else Chinese": Japanese picks its own copy.
+  editSource('components/settings/plugin-manager/PluginManagerContent.tsx', 'chineseData', [
+    ["(presentation === 'v2' && language === 'en' ? 'en' : 'zh-CN')",
+      "(presentation === 'v2' && language === 'en' ? 'en' : presentation === 'v2' && language === 'ja' ? 'ja' : 'zh-CN')"],
+  ]);
+  editSource('components/settings/plugin-manager/controls/plugin-manager.shell-copy.ts', 'chineseData', [
+    ["locale.startsWith('en') ? pluginManagerCopy.en : pluginManagerCopy.zh;",
+      "locale.startsWith('en') ? pluginManagerCopy.en : locale.startsWith('ja') ? pluginManagerCopy.ja : pluginManagerCopy.zh;"],
+  ]);
+  editSource('components/members/member-editor-changes.ts', 'chineseData', [
+    [/^import/m, "import { zj } from '../shell/zh-ja';\nimport"],
+    ['(english ? membersCopy.en : membersCopy.zh)',
+      "(english ? membersCopy.en : zj('zh', 'ja') === 'ja' ? membersCopy.ja : membersCopy.zh)"],
+  ]);
+  // Chinese that the server registry and the skills manifest send as data.
+  editSource('components/settings/SystemSettingsView.tsx', 'chineseData', [
+    [/^import/m, "import { zj, zjd } from '../shell/zh-ja';\nimport"],
+    // A state read aloud with the switch, not the 关闭 (close) action.
+    ["aria-label={`${label}: ${on ? '开启' : '关闭'}`}", "aria-label={`${label}: ${on ? zj('开启', '有効') : zj('关闭', '無効')}`}"],
+    ['const label = variable.label ?? variable.name;', 'const label = zjd(variable.label) ?? variable.name;'],
+    ['const displayValue = variable.currentValue ?? variable.defaultValue;',
+      'const displayValue = variable.currentValue ?? zjd(variable.defaultValue);'],
+    ['{variable.description}</HelpTip>', '{zjd(variable.description)}</HelpTip>'],
+    [/label: groupLabels\[key\] \?\? key/g, 'label: zjd(groupLabels[key]) ?? key'],
+  ]);
+  editSource('components/settings/EnvSubComponents.tsx', 'chineseData', [
+    [/^import/m, "import { zjd } from '../shell/zh-ja';\nimport"],
+    ['.map(([key, label]) => ({ key, label, vars:', '.map(([key, label]) => ({ key, label: zjd(label), vars:'],
+    ['{v.description}', '{zjd(v.description)}'],
+    ['（默认: {v.defaultValue}）', '（默认: {zjd(v.defaultValue)}）'],
+  ]);
+  editSource('components/settings/SkillsSubComponents.tsx', 'chineseData', [
+    [/^import/m, "import { zjd } from '../shell/zh-ja';\nimport"],
+    ["subInfo={skill.category || '未分类'}", "subInfo={zjd(skill.category) || '未分类'}"],
+    ['categories.map((c) => ({ key: c, label: c }))', 'categories.map((c) => ({ key: c, label: zjd(c) }))'],
+  ]);
+  editSource('components/settings/SkillPreviewModal.tsx', 'chineseData', [
+    [/^import/m, "import { zjd } from '../shell/zh-ja';\nimport"],
+    ['{category}', '{zjd(category)}'],
   ]);
   // A server component: the Japanese build names the page at build time.
   editSource('app/settings/page.tsx', 'document', [
@@ -627,12 +667,31 @@ if (inventory) {
   process.exit(0);
 }
 let chineseReport;
+let chineseDataEntries = 0;
 if (source) {
   integrateSource();
   const zh = localizeChineseLiterals({ parser, ...chineseLiteralTargets(), dictionary: chineseDictionary, englishDictionary: dictionary,
     read: file => pending.get(file) ?? fs.readFileSync(file, 'utf8') });
   for (const [file, content] of zh.edits) pending.set(file, content);
   integration.chineseLiterals = zh.applied.size;
+  // Chinese that reaches the browser as data (server settings registry, skill categories), looked up by zjd().
+  const data = {};
+  for (const file of fs.readdirSync(__dirname).filter(name => /^zhja-data[\w-]*\.json$/.test(name)).sort()) {
+    Object.assign(data, JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8')));
+  }
+  const exact = Object.fromEntries(Object.entries(data).filter(([chinese]) => !/\{\d+\}/.test(chinese)));
+  // Keys with {0}, {1}: the server sends them interpolated, so they match as patterns in order.
+  const templates = Object.entries(data).filter(([chinese]) => /\{\d+\}/.test(chinese)).map(([chinese, japanese]) => {
+    const order = [...chinese.matchAll(/\{(\d+)\}/g)].map(match => Number(match[1]));
+    if (order.some((slot, index) => slot !== index)) throw new Error(`Keep data placeholders in order: ${chinese}`);
+    const source = '^' + chinese.split(/\{\d+\}/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('([\\s\\S]+?)') + '$';
+    return `  [new RegExp(${JSON.stringify(source)}), ${JSON.stringify(japanese)}],`;
+  });
+  pending.set(path.join(web, 'src', 'components', 'shell', 'zh-ja-data.ts'),
+    '/** Japanese for Chinese shown as data (generated by localization/localize.cjs from zhja-data*.json). */\n' +
+    `export const ZH_JA_DATA: Readonly<Record<string, string>> = ${JSON.stringify(exact, null, 2)};\n\n` +
+    `export const ZH_JA_DATA_TEMPLATES: ReadonlyArray<readonly [RegExp, string]> = [\n${templates.join('\n')}\n];\n`);
+  chineseDataEntries = Object.keys(data).length;
   chineseReport = { lazyFiles: zh.lazyFiles.size, moduleLevel: zh.eager.length, skippedAsData: zh.skippedData.size,
     unusedChinese: [...chineseDictionary.keys()].filter(key => !zh.applied.has(key)).length };
   if (process.env.CLOWDER_ZH_REPORT) fs.writeFileSync(process.env.CLOWDER_ZH_REPORT, JSON.stringify({ moduleLevel: zh.eager,
@@ -652,4 +711,4 @@ if (!checkOnly) {
 }
 console.log(JSON.stringify({ mode, checkOnly, copies, localizedCopies: exactEdits, files: pending.size, integration,
   entries: catalogEntries.size, matchedTranslations: applied.size,
-  unmatchedTranslations: [...dictionary.keys()].filter(key => !applied.has(key)), chineseLiterals: chineseReport }, null, 2));
+  unmatchedTranslations: [...dictionary.keys()].filter(key => !applied.has(key)), chineseLiterals: chineseReport, chineseDataEntries }, null, 2));
