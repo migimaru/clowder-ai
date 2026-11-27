@@ -3,14 +3,15 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 
 const [mode, rootArg, flag] = process.argv.slice(2);
-if (!['source', 'packaged', 'inventory'].includes(mode) || !rootArg || (flag && flag !== '--check')) {
-  console.error('Usage: node localize.cjs <source|packaged|inventory> <Clowder AI root> [--check]');
+if (!['source', 'packaged', 'inventory', 'inventory-zh'].includes(mode) || !rootArg || (flag && flag !== '--check')) {
+  console.error('Usage: node localize.cjs <source|packaged|inventory|inventory-zh> <Clowder AI root> [--check]');
   process.exit(1);
 }
 
 const root = path.resolve(rootArg);
 const web = path.join(root, 'packages', 'web');
 const source = mode === 'source';
+const { localizeChineseLiterals } = require('./zh-literals.cjs');
 const inventory = mode === 'inventory';
 const checkOnly = flag === '--check';
 const parser = [__dirname, root, 'C:\\Program Files\\ClowderAI'].reduce((found, directory) => {
@@ -34,11 +35,34 @@ for (const file of fs.readdirSync(__dirname).filter(name => /^ja-[\w-]+\.json$/.
   }
 }
 
+// Japanese for upstream text written directly in Chinese, keyed by the Chinese (see zh-literals.cjs).
+const chineseDictionary = new Map();
+for (const file of fs.readdirSync(__dirname).filter(name => /^zhja-[\w-]+\.json$/.test(name))) {
+  for (const [chinese, japanese] of Object.entries(JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8')))) {
+    if (!chinese || typeof japanese !== 'string' || !japanese) throw new Error(`Invalid translation in ${file}`);
+    if (chineseDictionary.has(chinese) && chineseDictionary.get(chinese) !== japanese) {
+      throw new Error(`Conflicting translations for ${JSON.stringify(chinese)} in ${file}`);
+    }
+    chineseDictionary.set(chinese, japanese);
+  }
+}
+
+function chineseLiteralTargets() {
+  const src = path.join(web, 'src');
+  const listed = JSON.parse(fs.readFileSync(path.join(__dirname, 'zh-targets.json'), 'utf8'));
+  const files = listed.map(relative => path.join(src, relative));
+  const missing = files.filter(file => !fs.existsSync(file));
+  if (missing.length) throw new Error(`Chinese-literal targets are missing upstream: ${missing.join(', ')}`);
+  const dataScope = filesUnder(src, name => /\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name))
+    .filter(file => !file.includes(`${path.sep}__tests__${path.sep}`));
+  return { src, files, dataScope };
+}
+
 const applied = new Set();
 const catalogEntries = new Set();
 const pending = new Map();
 const integration = { preference: 0, copy: 0, document: 0, settings: 0, settingsLabels: 0,
-  ...(source ? { navigation: 0, tests: 0, compatibility: 0, presentation: 0, demo: 0, fonts: 0 } : {}) };
+  ...(source ? { navigation: 0, tests: 0, compatibility: 0, presentation: 0, demo: 0, fonts: 0, members: 0 } : {}) };
 let copies = 0;
 let exactEdits = 0;
 
@@ -110,11 +134,23 @@ function translatedValue(node, text, importedCopies) {
   return changes.length ? editRanges(text.slice(node.start, node.end), changes) : null;
 }
 
-function addJapaneseCatalogs(text) {
-  const ast = parser.parse(text, { sourceType: 'unambiguous', plugins: source ? ['typescript'] : [] });
+function addJapaneseCatalogs(text, file = '') {
+  const plugins = source ? ['typescript', ...(file.endsWith('.tsx') ? ['jsx'] : [])] : [];
+  const ast = parser.parse(text, { sourceType: 'unambiguous', plugins });
   const importedCopies = new Set(ast.program.body
     .filter(node => node.type === 'ImportDeclaration' && /\.shell-copy(?:\.ts)?$/.test(node.source.value))
     .flatMap(node => node.specifiers.map(specifier => specifier.local.name)));
+  if (source) {
+    for (const node of ast.program.body) {
+      if (node.type !== 'ImportDeclaration') continue;
+      for (const specifier of node.specifiers) {
+        const name = specifier.imported?.name;
+        if (PLAIN_COPY_MODULES.some(([module, exported]) => node.source.value.endsWith(module) && exported === name)) {
+          importedCopies.add(specifier.local.name);
+        }
+      }
+    }
+  }
   const edits = [];
   visit(ast.program, node => {
     if (node.type !== 'CallExpression') return;
@@ -138,8 +174,65 @@ function addJapaneseCatalogs(text) {
     return false;
   });
   const result = editRanges(text, edits);
-  if (edits.length) parser.parse(result, { sourceType: 'unambiguous', plugins: source ? ['typescript'] : [] });
+  if (edits.length) parser.parse(result, { sourceType: 'unambiguous', plugins });
   return result;
+}
+
+// Bilingual objects outside defineShellCopy that shell copies spread into their own catalogue.
+const PLAIN_COPY_MODULES = [
+  ['./members.editor-copy', 'editorCopy'],
+  ['./members.native-copy', 'nativeCopy'],
+  ['./members.continuation-copy', 'continuationCopy'],
+  ['./members.copy-templates', 'templates'],
+  ['@cat-cafe/shared', 'WORKTREE_NOTICE_COPY'],
+];
+const PLAIN_COPY_FILES = [
+  ['packages/web/src/components/members/members.editor-copy.ts', 'editorCopy'],
+  ['packages/web/src/components/members/members.native-copy.ts', 'nativeCopy'],
+  ['packages/web/src/components/members/members.continuation-copy.ts', 'continuationCopy'],
+  ['packages/web/src/components/members/members.copy-templates.ts', 'templates'],
+  ['packages/shared/src/worktree-notice.ts', 'WORKTREE_NOTICE_COPY'],
+];
+
+// English that the dictionary cannot reach: plural branches and locale arguments inside the templates.
+const PLAIN_COPY_FIXES = {
+  templates: [
+    ["`${count} unsaved ${count === 1 ? 'change' : 'changes'}`", '`未保存の変更 ${count} 件`'],
+    ["const list = fields.join(', ');", "const list = fields.join('、');"],
+    ["`${n} more ${n === 1 ? 'field' : 'fields'} needed to add: ${list}.`", '`追加するには、あと ${n} 項目の入力が必要です：${list}。`'],
+    ["intent === 'review' ? 'Review: ' : intent === 'architecture' ? 'Architecture: ' : ''",
+      "intent === 'review' ? 'レビュー：' : intent === 'architecture' ? 'アーキテクチャ：' : ''"],
+    ["toLocaleString('en-US')", "toLocaleString('ja-JP')"],
+  ],
+};
+
+function addJapaneseToPlainCopies() {
+  for (const [relative, name] of PLAIN_COPY_FILES) {
+    const file = path.join(root, relative);
+    let text = pending.get(file) ?? fs.readFileSync(file, 'utf8');
+    const ast = parser.parse(text, { sourceType: 'module', plugins: ['typescript'] });
+    let declarator;
+    visit(ast.program, node => {
+      if (node.type === 'VariableDeclarator' && node.id.name === name) declarator = node;
+    });
+    const copy = declarator?.init;
+    const en = copy?.type === 'ObjectExpression' && property(copy, 'en');
+    if (!en || en.value.type !== 'ObjectExpression' || !property(copy, 'zh') || property(copy, 'ja')) {
+      throw new Error(`${relative}: expected one zh/en object named ${name}`);
+    }
+    let japanese = translatedValue(en.value, text, new Set()) ?? text.slice(en.value.start, en.value.end);
+    for (const [before, after] of PLAIN_COPY_FIXES[name] ?? []) japanese = replaceOnce(japanese, before, after, relative, 'plainCopies');
+    const tail = text.slice(copy.properties.at(-1).end, copy.end - 1);
+    const separator = /^\s*,/.test(tail) ? '' : ',';
+    text = text.slice(0, copy.end - 1) + `${separator}ja: ${japanese},\n` + text.slice(copy.end - 1);
+    if (name === 'WORKTREE_NOTICE_COPY') {
+      text = replaceOnce(text, '{ zh: NoticeDictionary; en: NoticeDictionary }',
+        '{ zh: NoticeDictionary; en: NoticeDictionary; ja: NoticeDictionary }', relative, 'plainCopies');
+    }
+    parser.parse(text, { sourceType: 'module', plugins: ['typescript'] });
+    pending.set(file, text);
+    integration.plainCopies = (integration.plainCopies ?? 0) + 1;
+  }
 }
 
 function replaceOnce(text, before, after, file, role) {
@@ -345,6 +438,20 @@ function integrateSource() {
     ].join('\n')],
   ]);
   integrateExistingLanguageConsumers();
+  // Upstream passes a lookup key that no catalogue defines, so every language shows the Chinese key.
+  // Source-text contracts that read the literals zh-literals.cjs wraps.
+  editSource('components/__tests__/f190-visual-contract.test.ts', 'tests', [
+    [/toContain\("'安装'"\)/g, "toContain('\"安装\"')"],
+    ['/v\\.description[\\s\\S]*?默认: \\{v\\.defaultValue\\}/', '/v\\.description[\\s\\S]*?默认:[\\s\\S]*?\\{v\\.defaultValue\\}/'],
+  ]);
+  // A server component: the Japanese build names the page at build time.
+  editSource('app/settings/page.tsx', 'document', [
+    ['title: `设置 — ${', "title: `${process.env.NEXT_PUBLIC_CLOWDER_JAPANESE_DEFAULT === '1' ? '設定' : '设置'} — ${"],
+  ]);
+  editSource('components/members/MemberListPage.tsx', 'members', [
+    [/^import/m, "import { zj } from '../shell/zh-ja';\nimport"],
+    ["{t('一键检测并添加伙伴')}", "{zj(t('一键检测并添加伙伴'), 'メンバーを検出して追加')}"],
+  ]);
 }
 
 function integrateJapaneseFonts() {
@@ -489,14 +596,29 @@ function integratePackaged(text, filename) {
   return text;
 }
 
-const targets = source ? filesUnder(path.join(web, 'src'), name => name.endsWith('.shell-copy.ts'))
-  .filter(file => !file.includes(`${path.sep}__tests__${path.sep}`)) :
+if (mode === 'inventory-zh') {
+  const { inventory, applied: wrapped } = localizeChineseLiterals({ parser, ...chineseLiteralTargets(), dictionary: chineseDictionary, englishDictionary: dictionary });
+  const rows = [...inventory].filter(([key]) => !wrapped.has(key)).sort(([a], [b]) => a.localeCompare(b));
+  console.log(JSON.stringify(Object.fromEntries(rows.map(([key, places]) => [key, [...places].slice(0, 3)])), null, 2));
+  process.exit(0);
+}
+
+// defineShellCopy catalogues whose file names do not end in .shell-copy.ts.
+const EXTRA_COPY_FILES = [
+  'components/chat-background/background-copy.ts', 'components/message-v2/message-actions-copy.ts',
+  'components/message-v2/message-reading-copy.ts', 'components/settings/you-settings-copy.ts',
+  'components/workspace/PullRequestChangesStatus.tsx',
+];
+const targets = source ? [...filesUnder(path.join(web, 'src'), name => name.endsWith('.shell-copy.ts'))
+  .filter(file => !file.includes(`${path.sep}__tests__${path.sep}`)),
+  ...EXTRA_COPY_FILES.map(relative => path.join(web, 'src', relative))] :
   ['static', 'server'].flatMap(directory => filesUnder(path.join(web, '.next', directory), name => name.endsWith('.js')));
 
+if (source) addJapaneseToPlainCopies();
 for (const file of targets) {
   const text = fs.readFileSync(file, 'utf8');
   let localized = text;
-  if (source || (text.includes('zh:{') && text.includes('en:{'))) localized = addJapaneseCatalogs(text);
+  if (source || (text.includes('zh:{') && text.includes('en:{'))) localized = addJapaneseCatalogs(text, file);
   if (!source && !inventory) localized = integratePackaged(localized, file);
   if (!inventory && text !== localized) pending.set(file, localized);
 }
@@ -504,7 +626,18 @@ if (inventory) {
   console.log(JSON.stringify([...catalogEntries].sort(), null, 2));
   process.exit(0);
 }
-if (source) integrateSource();
+let chineseReport;
+if (source) {
+  integrateSource();
+  const zh = localizeChineseLiterals({ parser, ...chineseLiteralTargets(), dictionary: chineseDictionary, englishDictionary: dictionary,
+    read: file => pending.get(file) ?? fs.readFileSync(file, 'utf8') });
+  for (const [file, content] of zh.edits) pending.set(file, content);
+  integration.chineseLiterals = zh.applied.size;
+  chineseReport = { lazyFiles: zh.lazyFiles.size, moduleLevel: zh.eager.length, skippedAsData: zh.skippedData.size,
+    unusedChinese: [...chineseDictionary.keys()].filter(key => !zh.applied.has(key)).length };
+  if (process.env.CLOWDER_ZH_REPORT) fs.writeFileSync(process.env.CLOWDER_ZH_REPORT, JSON.stringify({ moduleLevel: zh.eager,
+    skippedAsData: [...zh.skippedData].sort() }, null, 2));
+}
 if (Object.values(integration).some(count => !count) || !exactEdits) {
   throw new Error(`Upstream integration requires review: ${JSON.stringify({ integration, copies, exactEdits })}`);
 }
@@ -519,4 +652,4 @@ if (!checkOnly) {
 }
 console.log(JSON.stringify({ mode, checkOnly, copies, localizedCopies: exactEdits, files: pending.size, integration,
   entries: catalogEntries.size, matchedTranslations: applied.size,
-  unmatchedTranslations: [...dictionary.keys()].filter(key => !applied.has(key)) }, null, 2));
+  unmatchedTranslations: [...dictionary.keys()].filter(key => !applied.has(key)), chineseLiterals: chineseReport }, null, 2));
