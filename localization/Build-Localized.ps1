@@ -38,7 +38,7 @@ if ($AlreadyApplied) {
     if ($LASTEXITCODE -ne 0) { throw 'Could not apply the Japanese localization.' }
 
     # The upstream builder binds the Web, API and packages to a committed source revision.
-    & git -C $buildRoot add -- packages/web/src
+    & git -C $buildRoot add -- packages/web/src packages/web/public/fonts
     if ($LASTEXITCODE -ne 0) { throw 'Could not stage the generated translations.' }
     & git -C $buildRoot -c 'user.name=Clowder AI Japanese build' -c 'user.email=localizer@localhost' `
         commit -m 'build: apply Japanese localization'

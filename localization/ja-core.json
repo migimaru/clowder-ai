@@ -1,4 +1,7 @@
 {
+  "Pin \"{0}\" to the narrow rail": "「{0}」をサイドレールにピン留め",
+  "Unpin \"{0}\" from the narrow rail": "「{0}」のサイドレールへのピン留めを解除",
+  "{0} / {1} completed": "{0} / {1} 完了",
   "My Café": "マイカフェ",
   "New conversation": "新しい会話",
   "All works": "すべての成果物",

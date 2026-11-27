@@ -38,7 +38,7 @@ const applied = new Set();
 const catalogEntries = new Set();
 const pending = new Map();
 const integration = { preference: 0, copy: 0, document: 0, settings: 0, settingsLabels: 0,
-  ...(source ? { navigation: 0, tests: 0, compatibility: 0 } : {}) };
+  ...(source ? { navigation: 0, tests: 0, compatibility: 0, presentation: 0, demo: 0, fonts: 0 } : {}) };
 let copies = 0;
 let exactEdits = 0;
 
@@ -71,9 +71,13 @@ function editRanges(text, edits) {
   return text;
 }
 
-function translatedValue(node, text) {
+function translatedValue(node, text, importedCopies) {
   const changes = [];
   visit(node, (current, parent) => {
+    if (current.type === 'MemberExpression' && !current.computed && current.property.name === 'en' &&
+        importedCopies.has(current.object.name)) {
+      changes.push([current.property.start - node.start, current.property.end - node.start, 'ja']);
+    }
     let english;
     let format;
     if (current.type === 'StringLiteral') {
@@ -108,6 +112,9 @@ function translatedValue(node, text) {
 
 function addJapaneseCatalogs(text) {
   const ast = parser.parse(text, { sourceType: 'unambiguous', plugins: source ? ['typescript'] : [] });
+  const importedCopies = new Set(ast.program.body
+    .filter(node => node.type === 'ImportDeclaration' && /\.shell-copy(?:\.ts)?$/.test(node.source.value))
+    .flatMap(node => node.specifiers.map(specifier => specifier.local.name)));
   const edits = [];
   visit(ast.program, node => {
     if (node.type !== 'CallExpression') return;
@@ -119,7 +126,7 @@ function addJapaneseCatalogs(text) {
     if (en?.value.type !== 'ObjectExpression' || zh?.value.type !== 'ObjectExpression') return;
     // Compiled chunks have mangled callee names; require a matching bilingual object shape.
     if (en.value.properties.length !== zh.value.properties.length) return;
-    const japanese = translatedValue(en.value, text);
+    const japanese = translatedValue(en.value, text, importedCopies);
     copies++;
     if (japanese) {
       const tail = text.slice(copy.properties.at(-1).end, copy.end - 1);
@@ -161,10 +168,11 @@ function editSource(relative, role, replacements) {
 }
 
 function integrateSource() {
+  const japaneseDefault = "process.env.NEXT_PUBLIC_CLOWDER_JAPANESE_DEFAULT === '1'";
   editSource('components/shell/shell-language.ts', 'preference', [
     ["export type ShellLanguage = 'zh' | 'en';", "export type ShellLanguage = 'zh' | 'en' | 'ja';"],
     ["DEFAULT_SHELL_LANGUAGE: ShellLanguage = 'zh';",
-      "DEFAULT_SHELL_LANGUAGE: ShellLanguage = process.env.NEXT_PUBLIC_CLOWDER_JAPANESE_DEFAULT === '1' ? 'ja' : 'zh';"],
+      `DEFAULT_SHELL_LANGUAGE: ShellLanguage = ${japaneseDefault} ? 'ja' : 'zh';`],
     ["value === 'zh' || value === 'en'", "value === 'zh' || value === 'en' || value === 'ja'"],
     ['export function useShellLanguage(): ShellLanguage {', [
       "export function useBilingualShellLanguage(): 'zh' | 'en' {",
@@ -181,8 +189,45 @@ function integrateSource() {
     ['return copy[language];', 'return copy[language] ?? copy.en;'],
   ]);
   editSource('components/shell/ShellDocumentLanguage.tsx', 'document', [
-    ["language === 'en' ? 'en' : 'zh-CN'", "language === 'ja' ? 'ja' : language === 'en' ? 'en' : 'zh-CN'"],
+    ["import { useShellLanguage } from './shell-language';",
+      "import { useShellLanguage } from './shell-language';\nimport type { ShellPresentation } from './shell-presentation';"],
+    [/\/\*\*\n \* F322 AC-B6–B8[\s\S]*?\*\//,
+      '/** Apply the current shell language to the document while the shell is mounted. */'],
+    ['ShellDocumentLanguage(): null',
+      "ShellDocumentLanguage({ presentation = 'v2' }: { presentation?: ShellPresentation }): null"],
+    ["language === 'en' ? 'en' : 'zh-CN'", "presentation === 'classic' || language === 'zh' ? 'zh-CN' : language"],
+    ['}, [language]);', '}, [language, presentation]);'],
   ]);
+  editSource('app/layout.tsx', 'document', [
+    ['lang="zh-CN"', `lang={${japaneseDefault} ? 'ja' : 'zh-CN'}`],
+  ]);
+  editSource('components/AppShell.tsx', 'document', [
+    [/\/\/ F322 Stage 1: the decided Café 1\.6 rail[^\n]*\n(?:\/\/[^\n]*\n)*/,
+      '// F322 Stage 1: the Café 1.6 rail is used while the new shell is active.\n'],
+    ['    <ShellDocumentLanguage />\n', ''],
+    ['    <ShellPresentationContext.Provider value={presentation}>',
+      '    <ShellPresentationContext.Provider value={presentation}>\n      <ShellDocumentLanguage presentation={presentation} />'],
+  ]);
+  editSource('components/shell/shell-presentation.ts', 'presentation', [
+    ["const SYNC_EVENT = 'cat-cafe:shell-presentation-sync';",
+      `const DEFAULT_PRESENTATION: ShellPresentation = ${japaneseDefault} ? 'v2' : 'classic';\nconst SYNC_EVENT = 'cat-cafe:shell-presentation-sync';`],
+    [/return 'classic';/g, 'return DEFAULT_PRESENTATION;'],
+    ["?? 'classic';", '?? DEFAULT_PRESENTATION;'],
+    ["() => 'classic'", '() => DEFAULT_PRESENTATION'],
+  ]);
+  editSource('components/onboarding-demo/demo-deliverable.ts', 'demo', [
+    ["language === 'en' ? 'en' : 'zh'", "language === 'en' || language === 'ja' ? language : 'zh'"],
+    ['    en: serialize(demoDeliverableCopy.en),', '    en: serialize(demoDeliverableCopy.en),\n    ja: serialize(demoDeliverableCopy.ja),'],
+    ["initialLanguage === 'en' ? 'en' : 'zh-CN'", "initialLanguage === 'zh' ? 'zh-CN' : initialLanguage"],
+    ["document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';",
+      "document.documentElement.lang = language === 'zh' ? 'zh-CN' : language;"],
+    ["data.language === 'zh' || data.language === 'en'", "data.language === 'zh' || data.language === 'en' || data.language === 'ja'"],
+  ]);
+  editSource('components/ThreadSidebar/sidebar-header.shell-copy.ts', 'navigation', [
+    [/(\bja:\s*\{[\s\S]*?\bconversationCount:\s*\(count: number\) => )`\$\{count\} conversation\$\{count === 1 \? '' : 's'\}`/,
+      '$1`${count} 件の会話`'],
+  ]);
+  integrateJapaneseFonts();
   editSource('components/settings/ThemeSettingsPanel.tsx', 'settings', [
     ["['zh', 'en'];", "['zh', 'en', 'ja'];"],
     ["en: 'English' };", "en: 'English', ja: '日本語' };"],
@@ -227,7 +272,111 @@ function integrateSource() {
   editSource('components/shell/__tests__/shell-copy-parity-check.test.ts', 'tests', [
     ["return { kind: 'shell-copy', zh, en, samples, grammar };", "return { kind: 'shell-copy', zh, en, ja: en, samples, grammar };"],
   ]);
+  editSource('components/shell/__tests__/shell-presentation.test.ts', 'tests', [
+    ["describe, expect, it }", "describe, expect, it, vi }"],
+    ["  it('persists v2 and classic, and ignores anything else', () => {", [
+      "  it('defaults to v2 in the Japanese build and respects a stored classic choice', async () => {",
+      '    vi.resetModules();',
+      "    vi.stubEnv('NEXT_PUBLIC_CLOWDER_JAPANESE_DEFAULT', '1');",
+      '    try {',
+      "      const localized = await import('../shell-presentation');",
+      "      expect(localized.readShellPresentation()).toBe('v2');",
+      "      localized.writeShellPresentation('classic');",
+      "      expect(localized.readShellPresentation()).toBe('classic');",
+      '    } finally {',
+      '      vi.unstubAllEnvs();',
+      '      vi.resetModules();',
+      '    }',
+      '  });',
+      '',
+      "  it('persists v2 and classic, and ignores anything else', () => {",
+    ].join('\n')],
+  ]);
+  editSource('components/__tests__/AppShell-document-language.test.tsx', 'tests', [
+    ["classic never reads the language: English stored, the document stays zh-CN",
+      'classic uses zh-CN regardless of the stored shell language'],
+    ["  it('v2 in Chinese (the default) is zh-CN', async () => {", [
+      "  it('corrects the Japanese server default for classic and follows Japanese in v2', async () => {",
+      "    document.documentElement.lang = 'ja';",
+      "    writeShellLanguage('ja');",
+      '    await mount();',
+      "    expect(lang()).toBe('zh-CN');",
+      "    act(() => writeShellPresentation('v2'));",
+      "    expect(lang()).toBe('ja');",
+      "    act(() => writeShellLanguage('en'));",
+      "    expect(lang()).toBe('en');",
+      '  });',
+      '',
+      "  it('v2 in Chinese (the default) is zh-CN', async () => {",
+    ].join('\n')],
+  ]);
+  editSource('components/settings/__tests__/settings-shell-copy.test.ts', 'tests', [
+    ["  it('the English names are the approved table, not a translation made on the spot', () => {", [
+      "  it('uses the Japanese catalogue references for inherited section titles', () => {",
+      '    expect(settingsShellCopy.ja.sections.members).toMatch(/\\p{Script=Katakana}/u);',
+      '    expect(settingsShellCopy.ja.sections.accounts).toMatch(/\\p{Script=Katakana}/u);',
+      '  });',
+      '',
+      "  it('the English names are the approved table, not a translation made on the spot', () => {",
+    ].join('\n')],
+  ]);
+  editSource('components/first-run-quest/__tests__/demo-deliverable.test.ts', 'tests', [
+    ['import { DEMO_DELIVERABLE_HTML }', 'import { DEMO_DELIVERABLE_HTML, getDemoDeliverableHtml }'],
+    ['}, stage: string) {', "}, stage: string, language?: 'zh' | 'en' | 'ja') {"],
+    ['version: 1, stage },', 'version: 1, stage, language },'],
+    ["it('progressively builds the same document and retains tasks through review fixes', () => {", [
+      "it('starts in Japanese and relocalizes the same preview on a trusted parent message', () => {",
+      "  const dom = new JSDOM(getDemoDeliverableHtml('ja'), { runScripts: 'dangerously' });",
+      '  try {',
+      '    const page = dom.window.document;',
+      "    expect(page.documentElement.lang).toBe('ja');",
+      "    expect(page.title).toContain('今日のタスク');",
+      "    deliver(dom, 'initial', 'en');",
+      "    expect(page.documentElement.lang).toBe('en');",
+      "    deliver(dom, 'final', 'ja');",
+      "    expect(page.documentElement.lang).toBe('ja');",
+      "    expect(page.querySelector('#count')?.textContent).toBe('1 / 3 完了');",
+      '  } finally {',
+      '    dom.window.close();',
+      '  }',
+      '});',
+      '',
+      "it('progressively builds the same document and retains tasks through review fixes', () => {",
+    ].join('\n')],
+  ]);
   integrateExistingLanguageConsumers();
+}
+
+function integrateJapaneseFonts() {
+  const fontFiles = ['NotoSansJP-VF.ttf', 'OFL.txt', '.gitattributes'];
+  for (const file of fontFiles) {
+    const bytes = fs.readFileSync(path.join(__dirname, 'assets', 'fonts', file));
+    if (!bytes.length || (file.endsWith('.ttf') && (bytes.length < 4 || bytes.readUInt32BE(0) !== 0x00010000))) {
+      throw new Error(`Invalid bundled font asset: ${file}`);
+    }
+    pending.set(path.join(web, 'public', 'fonts', file), bytes);
+  }
+
+  const target = path.join(web, 'src', 'app', 'globals.css');
+  const original = fs.readFileSync(target, 'utf8');
+  const eol = original.includes('\r\n') ? '\r\n' : '\n';
+  const styles = [
+    '@font-face {',
+    '  font-family: "Noto Sans JP";',
+    '  src: url("/fonts/NotoSansJP-VF.ttf") format("truetype");',
+    '  font-weight: 100 900;',
+    '  font-display: swap;',
+    '}',
+    '',
+    'html:lang(ja) {',
+    '  --font-sans: "Noto Sans JP", "BIZ UDPGothic", "Yu Gothic UI", Meiryo, "Segoe UI", sans-serif;',
+    '}',
+    '',
+    'body {',
+    '  font-family: var(--font-sans);',
+  ].join(eol);
+  pending.set(target, replaceOnce(original, `body {${eol}  font-family: var(--font-sans);`, styles, target, 'font'));
+  integration.fonts++;
 }
 
 function integrateExistingLanguageConsumers() {
@@ -362,7 +511,12 @@ if (Object.values(integration).some(count => !count) || !exactEdits) {
 for (const [file, content] of pending) {
   if (file.endsWith('.js')) parser.parse(content, { sourceType: 'unambiguous' });
 }
-if (!checkOnly) for (const [file, content] of pending) fs.writeFileSync(file, content);
+if (!checkOnly) {
+  for (const [file, content] of pending) {
+    if (Buffer.isBuffer(content)) fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+}
 console.log(JSON.stringify({ mode, checkOnly, copies, localizedCopies: exactEdits, files: pending.size, integration,
   entries: catalogEntries.size, matchedTranslations: applied.size,
   unmatchedTranslations: [...dictionary.keys()].filter(key => !applied.has(key)) }, null, 2));
