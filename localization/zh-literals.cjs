@@ -126,7 +126,18 @@ function collectDataStrings(parser, files, read, where) {
 function bilingualCall(node) {
   const [zh, en] = node.arguments;
   return node.callee.type === 'Identifier' && node.callee.name === 't' && node.arguments.length === 2 &&
-    zh.type === 'StringLiteral' && HAN.test(zh.value) && en.type === 'StringLiteral' && !HAN.test(en.value);
+    containsHan(zh) && !containsHan(en);
+}
+
+/** Whether any string or template text inside the expression is Chinese. */
+function containsHan(node) {
+  let found = false;
+  visit(node, current => {
+    if (found) return false;
+    if (current.type === 'StringLiteral' && HAN.test(current.value)) found = true;
+    if (current.type === 'TemplateElement' && HAN.test(current.value.cooked ?? '')) found = true;
+  });
+  return found;
 }
 
 function parse(parser, file, text) {
@@ -185,7 +196,7 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
       if (!inventory.has(key)) inventory.set(key, new Set());
       inventory.get(key).add(`${path.relative(src, file).replaceAll('\\', '/')}:${line}`);
     };
-    visit(ast.program, (node, parent, key, inFunction) => {
+    const callback = (node, parent, key, inFunction) => {
       if (node.type === 'ImportDeclaration' || node.type === 'ExportAllDeclaration' ||
         (node.type === 'ExportNamedDeclaration' && node.source)) return false;
       if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' &&
@@ -198,6 +209,11 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
       if (node.type === 'CallExpression' && bilingualCall(node)) {
         // Japanese replaces the Chinese side, which t() shows for every language except English.
         const [zh, en] = node.arguments;
+        if (zh.type !== 'StringLiteral') {
+          // A template or a choice between texts: its Chinese parts are translated as usual.
+          visit(zh, callback, node, 'arguments', inFunction);
+          return false;
+        }
         note(zh.value, zh.loc.start.line);
         const japanese = dictionary.get(zh.value) ?? englishDictionary?.get(en.value);
         if (japanese !== undefined) {
@@ -252,7 +268,8 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
         applied.add(english);
         return false;
       }
-    });
+    };
+    visit(ast.program, callback);
     if (!changes.length) continue;
     let result = text;
     let end = result.length;

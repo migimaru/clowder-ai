@@ -1,0 +1,5 @@
+{
+  "所有者信任锚点：未设置时为单用户本地模式（依赖 loopback 保护）；设置后特权操作按此 ID 做 owner 校验。仅可通过编辑 .env 并重启修改——Hub 内可写会造成权限自举（会话可将自己设为 owner），故永久只读": "所有者の信頼の基点です。未設定のときは単一ユーザーのローカルモード（loopback の保護に依存）になり、設定すると特権操作でこの ID による owner の確認を行います。変更は .env を編集して再起動する方法だけです。Hub から書き込めると権限の自己付与（セッションが自分を owner にできる）につながるため、常に読み取り専用です。",
+  "readonly+agent-key 并集的显式开关：仅由合法的 agent-key 启动方（Antigravity executor / desktop writer）在确有密钥时置 \"true\"。CAT_CAFE_READONLY=true 默认严格只读，继承环境里残留的 CAT_CAFE_AGENT_KEY_* 不再扩大工具面。": "readonly と agent-key を併用するための明示的なスイッチです。正当な agent-key の起動元（Antigravity executor / desktop writer）が、実際にキーを持っているときだけ \"true\" にします。CAT_CAFE_READONLY=true は既定で厳格な読み取り専用で、環境に残った CAT_CAFE_AGENT_KEY_* を引き継いでも、使えるツールの範囲は広がりません。",
+  "向量检索模式 (off/shadow/on)。留空时由 console 上 Embedding 服务的开关决定（启用 → on）。显式设了 shadow/on 会覆盖，但 EMBED_MODE=off 不会关掉已经在 console 启用的服务（防 foot-gun）。": "ベクトル検索のモード（off/shadow/on）です。空欄のときは console の Embedding サービスのスイッチで決まります（有効 → on）。shadow/on を明示するとそれで上書きしますが、EMBED_MODE=off にしても console で有効にしたサービスは止まりません（誤操作の防止）。"
+}

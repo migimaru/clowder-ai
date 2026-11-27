@@ -458,6 +458,10 @@ function integrateSource() {
     ['(english ? membersCopy.en : membersCopy.zh)',
       "(english ? membersCopy.en : zj('zh', 'ja') === 'ja' ? membersCopy.ja : membersCopy.zh)"],
   ]);
+  editSource('components/settings/members/MemberSettingsPage.tsx', 'members', [
+    [/^import/m, "import { zj } from '../../shell/zh-ja';\nimport"],
+    ['{t(zh, en)}', "{t(key === 'voice' ? zj(zh, '音声') : zh, en)}"],
+  ]);
   // Chinese that the server registry and the skills manifest send as data.
   editSource('components/settings/SystemSettingsView.tsx', 'chineseData', [
     [/^import/m, "import { zj, zjd } from '../shell/zh-ja';\nimport"],
@@ -470,10 +474,17 @@ function integrateSource() {
     [/label: groupLabels\[key\] \?\? key/g, 'label: zjd(groupLabels[key]) ?? key'],
   ]);
   editSource('components/settings/EnvSubComponents.tsx', 'chineseData', [
-    [/^import/m, "import { zjd } from '../shell/zh-ja';\nimport"],
+    [/^import/m, "import { zj, zjd } from '../shell/zh-ja';\nimport"],
+    // 未设置 is also compared elsewhere, so only its display here is translated.
+    ["{v.currentValue ?? '未设置'}", "{v.currentValue ?? zj('未设置', '未設定')}"],
     ['.map(([key, label]) => ({ key, label, vars:', '.map(([key, label]) => ({ key, label: zjd(label), vars:'],
     ['{v.description}', '{zjd(v.description)}'],
     ['（默认: {v.defaultValue}）', '（默认: {zjd(v.defaultValue)}）'],
+  ]);
+  editSource('components/settings/primitives/ConfigFieldRenderer.tsx', 'chineseData', [
+    [/^import/m, "import { zj } from '../../shell/zh-ja';\nimport"],
+    ["      : '未设置'\n    : (field.currentValue ?? '未设置');",
+      "      : zj('未设置', '未設定')\n    : (field.currentValue ?? zj('未设置', '未設定'));"],
   ]);
   editSource('components/settings/SkillsSubComponents.tsx', 'chineseData', [
     [/^import/m, "import { zjd } from '../shell/zh-ja';\nimport"],
