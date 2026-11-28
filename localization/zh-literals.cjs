@@ -59,7 +59,12 @@ const KEY_CALLS = new Set([
   'getElementById', 'RegExp', 'zj',
 ]);
 const KEY_ATTRIBUTES = new Set(['key', 'id', 'className', 'href', 'src', 'value', 'name', 'htmlFor', 'role', 'type',
-  'data-testid', 'data-test-id', 'defaultValue']);
+  'data-testid', 'data-test-id', 'defaultValue',
+  // Props typed as Chinese literal unions and used as lookup keys (MemoryCorrectionCard's noun, TrajectoryId's kind).
+  'noun', 'kind']);
+// Object properties whose value is shown to the user.
+const DISPLAY_KEYS = new Set(['label', 'title', 'description', 'hint', 'placeholder', 'tooltip', 'subtitle', 'caption',
+  'helperText', 'emptyText', 'ariaLabel', 'summary']);
 
 const FUNCTION = /Function|ObjectMethod|ClassMethod|ClassPrivateMethod/;
 
@@ -89,6 +94,8 @@ function templateKey(node) {
 /** Strings that behave as data anywhere in the given sources. */
 function collectDataStrings(parser, files, read, where) {
   const data = new Set();
+  // Words fixed by a TypeScript literal type stay data even where they look like display text.
+  data.typed = new Set();
   let current = '';
   const add = node => {
     const value = node?.type === 'StringLiteral' && HAN.test(node.value) ? node.value :
@@ -111,7 +118,7 @@ function collectDataStrings(parser, files, read, where) {
       else if ((node.type === 'ObjectProperty' || node.type === 'ObjectMethod' || node.type === 'ClassProperty' ||
         node.type === 'TSPropertySignature') && !node.computed) add(node.key);
       else if (node.type === 'MemberExpression' && node.computed) add(node.property);
-      else if (node.type === 'TSLiteralType') add(node.literal);
+      else if (node.type === 'TSLiteralType') { add(node.literal); if (node.literal?.type === 'StringLiteral') data.typed.add(node.literal.value); }
       else if (node.type === 'TSEnumMember') add(node.initializer);
       else if (node.type === 'CallExpression' && KEY_CALLS.has(calleeName(node)) && !bilingualCall(node)) node.arguments.forEach(add);
       else if (node.type === 'NewExpression' && node.callee.name === 'Map' && node.arguments[0]?.type === 'ArrayExpression') {
@@ -176,6 +183,14 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
   // Texts that a template splices into its output (`${on ? '禁用' : '启用'}`, `${path ?? '全局'}`) are only shown,
   // even when the same words are compared elsewhere.
   const spliced = new WeakSet();
+  // Text placed straight into JSX children or a display property (see callback).
+  const shown = new WeakSet();
+  const markShown = node => {
+    if (!node) return;
+    if (node.type === 'StringLiteral') shown.add(node);
+    else if (node.type === 'ConditionalExpression') { markShown(node.consequent); markShown(node.alternate); }
+    else if (node.type === 'LogicalExpression') { markShown(node.left); markShown(node.right); }
+  };
   const markSpliced = node => {
     if (!node) return;
     if (node.type === 'StringLiteral') spliced.add(node);
@@ -220,6 +235,12 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
       inventory.get(key).add(`${path.relative(src, file).replaceAll('\\', '/')}:${line}`);
     };
     const callback = (node, parent, key, inFunction) => {
+      // Text placed straight into JSX children ({on ? '开启' : '关闭'}) or into a display property (label: '关闭')
+      // is only shown, even when the same words are compared elsewhere.
+      if (node.type === 'JSXExpressionContainer' && key === 'children') markShown(node.expression);
+      if (node.type === 'ObjectProperty' && !node.computed && DISPLAY_KEYS.has(node.key.name ?? node.key.value)) {
+        markShown(node.value);
+      }
       if (node.type === 'ImportDeclaration' || node.type === 'ExportAllDeclaration' ||
         (node.type === 'ExportNamedDeclaration' && node.source)) return false;
       if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' &&
@@ -273,7 +294,8 @@ function localizeChineseLiterals({ parser, src, files, dictionary, englishDictio
         if (parent?.type === 'MemberExpression' && parent.computed && key === 'property') return;
         note(node.value, node.loc.start.line);
         // A display attribute (title, placeholder, aria-label, ...) is only shown; key attributes were skipped above.
-        if (parent?.type !== 'JSXAttribute' && !spliced.has(node) && data.has(node.value)) return void skippedData.add(node.value);
+        if (parent?.type !== 'JSXAttribute' && !spliced.has(node) && !(shown.has(node) && !data.typed.has(node.value)) &&
+          data.has(node.value)) return void skippedData.add(node.value);
         const japanese = dictionary.get(node.value);
         if (japanese === undefined) return;
         replace(node, parent, key, inFunction, `zj(${quote(node.value)}, ${quote(japanese)})`);
